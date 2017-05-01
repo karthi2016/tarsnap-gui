@@ -45,8 +45,8 @@ MainWindow::MainWindow(QWidget *parent)
     _ui.archiveDetailsWidget->hide();
     _ui.jobDetailsWidget->hide();
     _ui.outOfDateNoticeLabel->hide();
-    _ui.archivesFilter->hide();
-    _ui.jobsFilter->hide();
+    _ui.archivesFilterFrame->hide();
+    _ui.jobsFilterFrame->hide();
 
 #ifdef Q_OS_OSX
     _ui.aboutButton->hide();
@@ -90,6 +90,8 @@ MainWindow::MainWindow(QWidget *parent)
     connect(_ui.actionStopTasks, &QAction::triggered, this, &MainWindow::getTaskInfo);
     connect(_ui.busyWidget, &BusyWidget::clicked, _ui.actionStopTasks,
             &QAction::trigger);
+    addAction(_ui.actionShowArchivesTabHeader);
+    addAction(_ui.actionShowJobsTabHeader);
     // --
 
     // Backup pane
@@ -254,6 +256,7 @@ MainWindow::MainWindow(QWidget *parent)
     _ui.jobListWidget->addAction(_ui.actionJobInspect);
     _ui.jobListWidget->addAction(_ui.actionJobRestore);
     _ui.jobListWidget->addAction(_ui.actionFilterJobs);
+    _ui.jobsFilterButton->setDefaultAction(_ui.actionFilterJobs);
     connect(_ui.addJobButton, &QToolButton::clicked, this,
             &MainWindow::addJobClicked);
     connect(_ui.jobDetailsWidget, &JobWidget::collapse, this,
@@ -353,7 +356,7 @@ MainWindow::MainWindow(QWidget *parent)
     });
     connect(_ui.actionFilterArchives, &QAction::triggered, [&]()
     {
-        _ui.archivesFilter->setVisible(!_ui.archivesFilter->isVisible());
+        _ui.archivesFilterFrame->setVisible(!_ui.archivesFilterFrame->isVisible());
         if(_ui.archivesFilter->isVisible())
             _ui.archivesFilter->setFocus();
         else
@@ -361,7 +364,7 @@ MainWindow::MainWindow(QWidget *parent)
     });
     connect(_ui.actionFilterJobs, &QAction::triggered, [&]()
     {
-        _ui.jobsFilter->setVisible(!_ui.jobsFilter->isVisible());
+        _ui.jobsFilterFrame->setVisible(!_ui.jobsFilterFrame->isVisible());
         if(_ui.jobsFilter->isVisible())
             _ui.jobsFilter->setFocus();
         else
@@ -389,11 +392,31 @@ MainWindow::MainWindow(QWidget *parent)
             translator.translateApp(qApp, language);
         }
     });
-    connect(this, &MainWindow::archiveList, this,
-            [&](const QList<ArchivePtr> archives)
+    connect(_ui.archiveListWidget, &ArchiveListWidget::countChanged, this,
+            [&](int total, int visible)
     {
-        _ui.archivesCountLabel->setText(tr("Archives (%1)")
-                                        .arg(archives.count()));
+        _ui.archivesCountLabel->setText(tr("Archives (%1/%2)")
+                                        .arg(visible).arg(total));
+    });
+    connect(_ui.jobListWidget, &JobListWidget::countChanged, this,
+            [&](int total, int visible)
+    {
+        _ui.jobsCountLabel->setText(tr("Jobs (%1/%2)")
+                                    .arg(visible).arg(total));
+    });
+    connect(_ui.actionShowArchivesTabHeader, &QAction::triggered,
+            [&](bool checked)
+    {
+        _ui.archivesHeader->setVisible(checked);
+        QSettings settings;
+        settings.setValue("app/archives_header_enabled", checked);
+    });
+    connect(_ui.actionShowJobsTabHeader, &QAction::triggered,
+            [&](bool checked)
+    {
+        _ui.jobsHeader->setVisible(checked);
+        QSettings settings;
+        settings.setValue("app/jobs_header_enabled", checked);
     });
 }
 
@@ -454,6 +477,12 @@ void MainWindow::loadSettings()
         settings.value("app/limit_upload", 0).toInt());
     _ui.limitDownloadSpinBox->setValue(
                 settings.value("app/limit_download", 0).toInt());
+    _ui.actionShowArchivesTabHeader->setChecked(
+                settings.value("app/archives_header_enabled", true).toBool());
+    _ui.archivesHeader->setVisible(_ui.actionShowArchivesTabHeader->isChecked());
+    _ui.actionShowJobsTabHeader->setChecked(
+                settings.value("app/jobs_header_enabled", true).toBool());
+    _ui.jobsHeader->setVisible(_ui.actionShowJobsTabHeader->isChecked());
 
     if(settings.value("app/default_jobs_dismissed", false).toBool())
     {
@@ -558,6 +587,11 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
     case Qt::Key_Escape:
         if(_ui.mainTabWidget->currentWidget() == _ui.archivesTab)
         {
+            if(_ui.archiveDetailsWidget->isVisible())
+            {
+                _ui.archiveDetailsWidget->close();
+                return;
+            }
             if(_ui.archivesFilter->isVisible())
             {
                 if(_ui.archivesFilter->currentText().isEmpty())
@@ -571,30 +605,25 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
                 }
                 return;
             }
-            else if(_ui.archiveDetailsWidget->isVisible())
-            {
-                _ui.archiveDetailsWidget->close();
-                return;
-            }
         }
         if(_ui.mainTabWidget->currentWidget() == _ui.jobsTab)
         {
+            if(_ui.jobDetailsWidget->isVisible())
+            {
+                hideJobDetails();
+                return;
+            }
             if(_ui.jobsFilter->isVisible())
             {
                 if(_ui.jobsFilter->currentText().isEmpty())
                 {
-                    _ui.jobsFilter->hide();
+                    _ui.actionFilterJobs->trigger();
                 }
                 else
                 {
                     _ui.jobsFilter->clearEditText();
                     _ui.jobsFilter->setFocus();
                 }
-                return;
-            }
-            if(_ui.jobDetailsWidget->isVisible())
-            {
-                hideJobDetails();
                 return;
             }
         }
@@ -718,6 +747,8 @@ void MainWindow::setupMenuBar()
     windowMenu->addAction(_ui.actionGoSettings);
     windowMenu->addAction(_ui.actionGoHelp);
     windowMenu->addAction(_ui.actionShowJournal);
+    windowMenu->addAction(_ui.actionShowArchivesTabHeader);
+    windowMenu->addAction(_ui.actionShowJobsTabHeader);
 
     QMenu *helpMenu = _menuBar->addMenu(tr("&Help"));
     QAction *actionTarsnapWebsite = new QAction(tr("Tarsnap Website"), this);
@@ -764,7 +795,6 @@ void MainWindow::overallStatsChanged(quint64 sizeTotal, quint64 sizeCompressed,
         Utils::humanBytes(storageSaved));
     _ui.accountStorageSavedLabel->setToolTip(tooltip);
     _ui.accountArchivesCountLabel->setText(QString::number(archiveCount));
-    _ui.archivesCountLabel->setText(tr("Archives (%1)").arg(archiveCount));
 }
 
 void MainWindow::updateTarsnapVersion(QString versionString)
@@ -1580,6 +1610,9 @@ void MainWindow::updateUi()
     _ui.archivesFilter->setToolTip(_ui.archivesFilter->toolTip()
                                    .arg(_ui.actionFilterArchives->shortcut()
                                         .toString(QKeySequence::NativeText)));
+    _ui.actionFilterJobs->setToolTip(_ui.actionFilterJobs->toolTip()
+                                         .arg(_ui.actionFilterJobs->shortcut()
+                                              .toString(QKeySequence::NativeText)));
     _ui.jobsFilter->setToolTip(_ui.jobsFilter->toolTip()
                                    .arg(_ui.actionFilterJobs->shortcut()
                                         .toString(QKeySequence::NativeText)));
